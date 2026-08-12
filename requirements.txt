@@ -1,0 +1,14 @@
+tensorflow>=2.15.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+pandas>=2.1.0
+matplotlib>=3.8.0
+scikit-learn>=1.4.0
+PyWavelets>=1.5.0
+shap>=0.45.0
+streamlit>=1.32.0
+Pillow>=10.2.0
+
+# Note: tkinter ships with the standard Python installer on Windows/macOS.
+# On Linux, install it via your package manager, e.g.:
+#   sudo apt-get install python3-tk
