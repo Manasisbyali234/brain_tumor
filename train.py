@@ -65,9 +65,15 @@ def main():
     print(f"   Class weights: {class_weight}")
 
     def augment(x, y):
+        # Spatial
         x = tf.image.random_flip_left_right(x)
         x = tf.image.random_flip_up_down(x)
-        x = tf.image.random_brightness(x, 0.1)
+        # Intensity
+        x = tf.image.random_brightness(x, 0.15)
+        x = tf.image.random_contrast(x, 0.8, 1.2)
+        # Simulate rotation via two flips + transpose
+        x = tf.cond(tf.random.uniform(()) > 0.5,
+                    lambda: tf.image.transpose(x), lambda: x)
         x = tf.clip_by_value(x, 0.0, 1.0)
         return x, y
 
@@ -81,14 +87,15 @@ def main():
     callbacks = [
         tf.keras.callbacks.ModelCheckpoint(
             os.path.join(args.out_dir, "best_model.h5"),
-            monitor="val_accuracy", save_best_only=True, mode="max", verbose=1
+            monitor="val_auc", save_best_only=True, mode="max", verbose=1
         ),
         tf.keras.callbacks.EarlyStopping(
-            monitor="val_accuracy", patience=8, restore_best_weights=True
+            monitor="val_auc", patience=10, restore_best_weights=True, mode="max"
         ),
         tf.keras.callbacks.ReduceLROnPlateau(
-            monitor="val_loss", factor=0.5, patience=3, min_lr=1e-7
+            monitor="val_loss", factor=0.5, patience=4, min_lr=1e-7, verbose=1
         ),
+        tf.keras.callbacks.CSVLogger(os.path.join(args.out_dir, "training_log.csv")),
     ]
 
     print("[3/4] Training ...")

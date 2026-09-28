@@ -15,46 +15,53 @@ import matplotlib.pyplot as plt
 
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name="last_conv", pred_index=None):
     """
-    Generates a Grad-CAM heatmap for a single image.
-    Works with Sequential and Functional Keras models by running a manual
-    forward pass with GradientTape watching the conv layer output.
+    Grad-CAM that works with Keras 3 loaded models.
+    Avoids layer.output / model.output entirely — uses a manual forward pass
+    with GradientTape watching a tf.Variable holding the conv activations.
     img_array: shape (1, H, W, C) — already preprocessed/normalized.
     """
+    h, w = int(img_array.shape[1]), int(img_array.shape[2])
     img_tensor = tf.cast(img_array, tf.float32)
 
-    # Locate the target conv layer index
-    layer_names = [l.name for l in model.layers]
-    if last_conv_layer_name not in layer_names:
-        raise ValueError(f"Layer '{last_conv_layer_name}' not found. Available: {layer_names}")
-    conv_idx = layer_names.index(last_conv_layer_name)
-
-    # Forward pass: run up to (and including) the conv layer, then continue
-    with tf.GradientTape() as tape:
-        x = img_tensor
-        conv_outputs = None
+    # Find target conv layer index; fall back to last Conv2D
+    target_idx = None
+    for i, layer in enumerate(model.layers):
+        if layer.name == last_conv_layer_name:
+            target_idx = i
+            break
+    if target_idx is None:
         for i, layer in enumerate(model.layers):
-            x = layer(x, training=False)
-            if i == conv_idx:
-                conv_outputs = x
-                tape.watch(conv_outputs)
-        predictions = x  # final output
-        if pred_index is None:
-            class_channel = predictions[:, 0]
-        else:
-            class_channel = predictions[:, pred_index]
-
-    if conv_outputs is None:
-        h, w = img_array.shape[1], img_array.shape[2]
+            if isinstance(layer, tf.keras.layers.Conv2D):
+                target_idx = i
+    if target_idx is None:
         return np.ones((h // 16, w // 16), dtype=np.float32)
 
-    grads = tape.gradient(class_channel, conv_outputs)
+    # First pass: run up to (and including) target conv layer to get its output
+    x = img_tensor
+    for i, layer in enumerate(model.layers):
+        x = layer(x, training=False)
+        if i == target_idx:
+            conv_out_value = x.numpy()  # capture as numpy
+            break
+
+    # Second pass inside GradientTape: use a tf.Variable for the conv output
+    # so gradients can flow back through the remaining layers
+    conv_var = tf.Variable(conv_out_value, trainable=True, dtype=tf.float32)
+
+    with tf.GradientTape() as tape:
+        tape.watch(conv_var)
+        x2 = conv_var
+        for i, layer in enumerate(model.layers):
+            if i > target_idx:
+                x2 = layer(x2, training=False)
+        class_channel = x2[:, 0] if pred_index is None else x2[:, pred_index]
+
+    grads = tape.gradient(class_channel, conv_var)
     if grads is None:
-        h, w = img_array.shape[1], img_array.shape[2]
         return np.ones((h // 16, w // 16), dtype=np.float32)
 
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-    heatmap = conv_outputs[0] @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))                    # (filters,)
+    heatmap = tf.reduce_sum(conv_var[0] * pooled_grads, axis=-1)            # (H, W)
     heatmap = tf.maximum(heatmap, 0)
     max_val = tf.math.reduce_max(heatmap)
     if max_val > 0:
@@ -62,37 +69,43 @@ def make_gradcam_heatmap(img_array, model, last_conv_layer_name="last_conv", pre
     return heatmap.numpy()
 
 
-def overlay_gradcam(img, heatmap, alpha=0.4):
+def overlay_gradcam(img, heatmap, alpha=0.5):
     """
-    Overlays a Grad-CAM heatmap onto the original (grayscale/fused) image.
+    Overlays a red Grad-CAM heatmap onto the original image.
+    High-activation regions appear bright red; low-activation regions stay transparent.
     img: (H, W) or (H, W, 1) float image in [0,1]
-    Returns an RGB uint8 image ready for display/saving.
+    Returns an RGB uint8 image.
     """
     import cv2
     img = np.squeeze(img)
     h, w = img.shape[:2]
 
-    heatmap_resized = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_LINEAR)
-    heatmap_resized = np.clip(heatmap_resized, 0, 1)
-    heatmap_uint8 = np.uint8(255 * heatmap_resized)
+    hm = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_CUBIC)
+    hm = np.clip(hm, 0, 1)
 
-    jet_colors = plt.colormaps["jet"](np.arange(256))[:, :3]
-    jet_heatmap = jet_colors[heatmap_uint8]
+    # Adaptive threshold: only show top activations
+    nonzero = hm[hm > 0.05]
+    thresh = float(np.percentile(nonzero, 50)) if len(nonzero) > 0 else 0.4
+    hm_thresh = np.where(hm > thresh, hm, 0.0)
 
-    img_rgb = np.stack([img] * 3, axis=-1) if img.ndim == 2 else img
-    superimposed = jet_heatmap * alpha + img_rgb * (1 - alpha)
-    superimposed = np.clip(superimposed * 255, 0, 255).astype(np.uint8)
-    return superimposed
+    img_uint8 = np.uint8(np.clip(img * 255, 0, 255))
+    img_rgb = cv2.cvtColor(img_uint8, cv2.COLOR_GRAY2RGB) if img.ndim == 2 else img_uint8.copy()
+
+    red_overlay = np.zeros_like(img_rgb, dtype=np.float32)
+    red_overlay[:, :, 0] = hm_thresh * 255  # R only
+
+    mask_3ch = np.stack([hm_thresh] * 3, axis=-1)
+    blended = img_rgb.astype(np.float32) * (1 - mask_3ch * alpha) + red_overlay * (mask_3ch * alpha)
+    return np.clip(blended, 0, 255).astype(np.uint8)
 
 
-def draw_attention_contour(img, heatmap, threshold=0.5, label="Model Attention Region"):
+def draw_attention_contour(img, heatmap, threshold=None, label="Tumor Region"):
     """
-    Draws a red contour around the high-activation region from the Grad-CAM
-    heatmap on the original image.  Returns an RGB uint8 image.
-
+    Draws a precise red contour + bounding box around the high-activation
+    region from the Grad-CAM heatmap.
+    threshold=None → adaptive (top-40% of heatmap values).
     img      : (H, W) or (H, W, 1) float [0,1]
-    heatmap  : raw output of make_gradcam_heatmap — 2-D float [0,1]
-    threshold: fraction of max activation above which a pixel is "active"
+    heatmap  : 2-D float [0,1] from make_gradcam_heatmap
     """
     import cv2
     img_sq = np.squeeze(img)
@@ -101,24 +114,47 @@ def draw_attention_contour(img, heatmap, threshold=0.5, label="Model Attention R
     img_uint8 = np.uint8(np.clip(img_sq * 255, 0, 255))
     img_rgb = cv2.cvtColor(img_uint8, cv2.COLOR_GRAY2RGB) if img_sq.ndim == 2 else img_uint8.copy()
 
-    hm = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_LINEAR)
+    # Bicubic upscale → sharper heatmap at full resolution
+    hm = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_CUBIC)
     hm = np.clip(hm, 0, 1)
 
-    binary = np.uint8(hm >= threshold) * 255
+    # Adaptive threshold: top 40% of non-trivial activations
+    if threshold is None:
+        nonzero_vals = hm[hm > 0.05]
+        threshold = float(np.percentile(nonzero_vals, 60)) if len(nonzero_vals) > 0 else 0.4
+
+    hm_smooth = cv2.GaussianBlur(hm, (11, 11), 0)
+    binary = np.uint8(hm_smooth >= threshold) * 255
+
+    # Morphological cleanup for a clean, filled contour
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN,
+                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+
     contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     if contours:
         largest = max(contours, key=cv2.contourArea)
-        overlay = img_rgb.copy()
-        cv2.drawContours(overlay, [largest], -1, (220, 50, 50), thickness=cv2.FILLED)
-        img_rgb = cv2.addWeighted(overlay, 0.25, img_rgb, 0.75, 0)
-        cv2.drawContours(img_rgb, [largest], -1, (220, 30, 30), thickness=2)
+
+        # Subtle red fill
+        fill_overlay = img_rgb.copy()
+        cv2.drawContours(fill_overlay, [largest], -1, (220, 0, 0), thickness=cv2.FILLED)
+        img_rgb = cv2.addWeighted(fill_overlay, 0.22, img_rgb, 0.78, 0)
+
+        # Bold red contour (3px)
+        cv2.drawContours(img_rgb, [largest], -1, (255, 0, 0), thickness=3)
+
+        # Red bounding box
         x, y, bw, bh = cv2.boundingRect(largest)
-        label_y = max(y - 8, 14)
-        cv2.putText(img_rgb, label, (x, label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(img_rgb, label, (x, label_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (220, 30, 30), 1, cv2.LINE_AA)
+        cv2.rectangle(img_rgb, (x, y), (x + bw, y + bh), (255, 0, 0), thickness=2)
+
+        # Label badge
+        label_y = max(y - 6, 16)
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(img_rgb, (x, label_y - th - 4), (x + tw + 4, label_y + 2), (255, 0, 0), cv2.FILLED)
+        cv2.putText(img_rgb, label, (x + 2, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
     return img_rgb
 
@@ -154,21 +190,15 @@ def plot_shap(shap_values, image, out_path="outputs/shap_explanation.png"):
 def _extract_brain_mask(img_uint8):
     """
     Returns a binary mask (uint8, 0/255) covering only the brain region.
-    Strategy: threshold out dark background -> largest connected component.
+    Strategy: Otsu threshold -> largest connected component.
     """
     import cv2
-    # Otsu threshold to separate brain from black background
     _, thresh = cv2.threshold(img_uint8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
-    # Keep only the largest connected component (= brain)
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
     if num_labels <= 1:
-        return thresh  # fallback: whole image
-    # label 0 is background; find largest non-background component
+        return thresh
     largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
     brain_mask = np.uint8(labels == largest_label) * 255
-
-    # Fill internal holes with morphological closing
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
     brain_mask = cv2.morphologyEx(brain_mask, cv2.MORPH_CLOSE, kernel)
     return brain_mask
@@ -176,17 +206,7 @@ def _extract_brain_mask(img_uint8):
 
 def segment_tumor_mask(img, heatmap):
     """
-    Produces a pixel-level tumor segmentation mask constrained inside the
-    brain region so it never fires on background.
-
-    Steps:
-      1. Extract brain mask (largest connected component after Otsu)
-      2. Resize Grad-CAM heatmap to full image size
-      3. Zero-out heatmap outside the brain mask
-      4. Otsu threshold on the brain-only heatmap values (adaptive cutoff)
-      5. Morphological closing to fill small holes inside the mask
-      6. Keep only the largest contour (removes stray specks)
-
+    Pixel-level tumor segmentation mask constrained inside the brain region.
     img      : (H, W) or (H, W, 1) float [0,1]
     heatmap  : 2-D float [0,1] from make_gradcam_heatmap
     Returns  : (mask_binary uint8, overlay_rgb uint8)
@@ -194,25 +214,20 @@ def segment_tumor_mask(img, heatmap):
     import cv2
     img_sq = np.squeeze(img)
     h, w = img_sq.shape[:2]
-
     img_uint8 = np.uint8(np.clip(img_sq * 255, 0, 255))
 
-    # Step 1 — brain mask
     brain_mask = _extract_brain_mask(img_uint8)
 
-    # Step 2 — resize heatmap
-    hm = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_LINEAR)
+    # Bicubic upscale for sharper mask
+    hm = cv2.resize(heatmap, (w, h), interpolation=cv2.INTER_CUBIC)
     hm = np.clip(hm, 0, 1)
 
-    # Step 3 — zero out background
     hm_brain = hm.copy()
     hm_brain[brain_mask == 0] = 0.0
 
-    # Step 4 — Otsu threshold on brain-only heatmap
     hm_u8 = np.uint8(hm_brain * 255)
-    otsu_val, mask = cv2.threshold(hm_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, mask = cv2.threshold(hm_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    # If Otsu finds nothing meaningful, fall back to top-30% within brain
     if np.sum(mask > 0) < 50:
         brain_vals = hm_brain[brain_mask > 0]
         if len(brain_vals) > 0:
@@ -220,12 +235,11 @@ def segment_tumor_mask(img, heatmap):
             mask = np.uint8(hm_brain >= fallback_thresh) * 255
             mask[brain_mask == 0] = 0
 
-    # Step 5 — morphological closing to fill holes
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,
+                            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)))
 
-    # Step 6 — keep only the largest contour
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     clean_mask = np.zeros_like(mask)
     if contours:
@@ -233,13 +247,15 @@ def segment_tumor_mask(img, heatmap):
         cv2.drawContours(clean_mask, [largest], -1, 255, thickness=cv2.FILLED)
     mask = clean_mask
 
-    # Build overlay
     img_rgb = cv2.cvtColor(img_uint8, cv2.COLOR_GRAY2RGB) if img_sq.ndim == 2 else img_uint8.copy()
     overlay = img_rgb.copy()
-    overlay[mask > 0] = [220, 30, 30]
-    blended = cv2.addWeighted(overlay, 0.40, img_rgb, 0.60, 0)
+    overlay[mask > 0] = [255, 0, 0]
+    blended = cv2.addWeighted(overlay, 0.35, img_rgb, 0.65, 0)
     if contours:
-        cv2.drawContours(blended, [max(contours, key=cv2.contourArea)], -1, (255, 60, 60), 2)
+        largest_c = max(contours, key=cv2.contourArea)
+        cv2.drawContours(blended, [largest_c], -1, (255, 0, 0), thickness=3)
+        x, y, bw, bh = cv2.boundingRect(largest_c)
+        cv2.rectangle(blended, (x, y), (x + bw, y + bh), (255, 0, 0), thickness=2)
 
     return mask, blended
 

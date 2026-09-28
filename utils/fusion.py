@@ -35,11 +35,12 @@ def pca_fusion(ct_img, mri_img):
     return fused.astype(np.float32)
 
 
-def dwt_fusion(ct_img, mri_img, wavelet="db2", level=2):
+def dwt_fusion(ct_img, mri_img, wavelet="db4", level=3):
     """
     Discrete Wavelet Transform based fusion.
-    Rule: average the low-frequency (approximation) sub-band,
-    take max-magnitude of high-frequency (detail) sub-bands.
+    db4 wavelet at level=3 preserves finer tumor-boundary details than db2/level=2.
+    Rule: weighted average of approximation sub-bands (MRI weighted higher for
+    soft-tissue contrast), max-magnitude of detail sub-bands.
     Returns a float32 image in [0, 1] with the same shape as ct_img.
     """
     # Ensure clean float32 inputs with no NaN/Inf
@@ -51,8 +52,8 @@ def dwt_fusion(ct_img, mri_img, wavelet="db2", level=2):
 
     fused_coeffs = []
 
-    # Approximation coefficients (lowest frequency): average
-    fused_approx = (coeffs_ct[0] + coeffs_mri[0]) / 2.0
+    # Approximation coefficients: weight MRI higher (0.6) for soft-tissue contrast
+    fused_approx = 0.4 * coeffs_ct[0] + 0.6 * coeffs_mri[0]
     fused_coeffs.append(fused_approx)
 
     # Detail coefficients at each level: take max-magnitude pixel-wise
@@ -99,3 +100,27 @@ def fuse_images(ct_img, mri_img, method="dwt"):
 
     fused = np.clip(fused, 0.0, 1.0)
     return fused
+
+
+def fusion_quality_metrics(ct_img, mri_img, fused_img):
+    """
+    Step 4b: Fusion Quality Assessment.
+    Computes SSIM and entropy to quantify how well the fused image
+    preserves information from both source images.
+    Returns a dict with ssim_ct, ssim_mri, entropy_fused.
+    """
+    from skimage.metrics import structural_similarity as ssim
+
+    ct_f = ct_img.astype(np.float32)
+    mri_f = mri_img.astype(np.float32)
+    fused_f = fused_img.astype(np.float32)
+
+    ssim_ct = ssim(ct_f, fused_f, data_range=1.0)
+    ssim_mri = ssim(mri_f, fused_f, data_range=1.0)
+
+    # Shannon entropy of fused image (higher = more information retained)
+    hist, _ = np.histogram(fused_f, bins=256, range=(0, 1), density=True)
+    hist = hist[hist > 0]
+    entropy = float(-np.sum(hist * np.log2(hist)) * (1.0 / 256))
+
+    return {"ssim_ct": round(ssim_ct, 4), "ssim_mri": round(ssim_mri, 4), "entropy": round(entropy, 4)}

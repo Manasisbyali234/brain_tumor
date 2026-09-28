@@ -19,14 +19,18 @@
 |------|-------------|------|
 | 1 | Data Collection | `utils/dataset.py` |
 | 2 | Preprocessing (resize, denoise, normalize) | `utils/preprocessing.py` |
-| 3 | Image Registration (align CT ↔ MRI) | `utils/registration.py` |
+| 2b | Skull Stripping (remove skull/background, keep brain only) | `utils/preprocessing.py` |
+| 3 | Image Registration (align CT ↔ MRI via ECC) | `utils/registration.py` |
 | 4 | Image Fusion (average / PCA / DWT) | `utils/fusion.py` |
+| 4b | Fusion Quality Assessment (SSIM + entropy metrics) | `utils/fusion.py` |
 | 5 | CNN Model Architecture | `models/cnn_model.py` |
-| 6 | Model Training | `train.py` |
-| 7 | Model Evaluation | `evaluate.py` |
+| 6 | Model Training (augmentation, class weights, callbacks) | `train.py` |
+| 7 | Model Evaluation (accuracy, F1, ROC-AUC, confusion matrix) | `evaluate.py` |
 | 8 | Prediction | `predict.py` |
-| 9 | Explainability (Grad-CAM + SHAP) | `utils/explainability.py` |
-| 10 | Output Display | `predict.py`, `app.py` |
+| 9 | Grad-CAM Explainability (heatmap + attention contour) | `utils/explainability.py` |
+| 9b | Tumor Segmentation Mask (brain-constrained pixel-level mask) | `utils/explainability.py` |
+| 9c | Severity Grading (Grade 0–4 from sigmoid score) | `utils/explainability.py` |
+| 10 | Output Display (5-panel figure + metrics printout) | `predict.py`, `app.py` |
 
 ---
 

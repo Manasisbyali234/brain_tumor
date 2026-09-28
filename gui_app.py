@@ -38,6 +38,7 @@ class BrainTumorApp:
         self.root.title("Brain Tumor Detection - CT/MRI Fusion")
         self.root.geometry("980x640")
         self.root.resizable(False, False)
+        self.root.configure(bg="#f5f0eb")
 
         self.ct_path = None
         self.mri_path = None
@@ -52,34 +53,38 @@ class BrainTumorApp:
     # ------------------------------------------------------------------ #
     def _build_layout(self):
         # ---- Top: title + status ----
-        header = tk.Frame(self.root, pady=10)
+        header = tk.Frame(self.root, pady=10, bg="#f5f0eb")
         header.pack(fill="x")
 
         tk.Label(
             header, text="🧠 Brain Tumor Detection using CT–MRI Image Fusion",
-            font=("Segoe UI", 16, "bold")
+            font=("Segoe UI", 16, "bold"), bg="#f5f0eb", fg="#3d2f1f"
         ).pack()
 
         self.status_label = tk.Label(
-            header, text="Loading model...", font=("Segoe UI", 10), fg="gray"
+            header, text="Loading model...", font=("Segoe UI", 10), fg="#7a6a58", bg="#f5f0eb"
         )
         self.status_label.pack()
 
         # ---- Controls row ----
-        controls = tk.Frame(self.root, pady=8)
+        controls = tk.Frame(self.root, pady=8, bg="#f5f0eb")
         controls.pack(fill="x", padx=20)
 
         tk.Button(controls, text="Select CT Image", width=18,
+                  bg="#ddd6cc", fg="#3d2f1f", relief="flat", cursor="hand2",
                   command=self.select_ct).grid(row=0, column=0, padx=5)
-        self.ct_path_label = tk.Label(controls, text="No file selected", fg="gray", width=40, anchor="w")
+        self.ct_path_label = tk.Label(controls, text="No file selected", fg="#7a6a58",
+                                      bg="#f5f0eb", width=40, anchor="w")
         self.ct_path_label.grid(row=0, column=1, padx=5, sticky="w")
 
         tk.Button(controls, text="Select MRI Image", width=18,
+                  bg="#ddd6cc", fg="#3d2f1f", relief="flat", cursor="hand2",
                   command=self.select_mri).grid(row=1, column=0, padx=5, pady=5)
-        self.mri_path_label = tk.Label(controls, text="No file selected", fg="gray", width=40, anchor="w")
+        self.mri_path_label = tk.Label(controls, text="No file selected", fg="#7a6a58",
+                                       bg="#f5f0eb", width=40, anchor="w")
         self.mri_path_label.grid(row=1, column=1, padx=5, sticky="w")
 
-        tk.Label(controls, text="Fusion method:").grid(row=0, column=2, padx=(30, 5))
+        tk.Label(controls, text="Fusion method:", bg="#f5f0eb", fg="#5a4a38").grid(row=0, column=2, padx=(30, 5))
         fusion_menu = ttk.Combobox(
             controls, textvariable=self.fusion_method,
             values=["dwt", "pca", "average"], width=10, state="readonly"
@@ -87,36 +92,40 @@ class BrainTumorApp:
         fusion_menu.grid(row=0, column=3)
 
         self.run_button = tk.Button(
-            controls, text="Run Detection", bg="#2563eb", fg="white",
-            font=("Segoe UI", 10, "bold"), width=18, command=self.run_detection_async
+            controls, text="Run Detection", bg="#8b6f47", fg="white",
+            font=("Segoe UI", 10, "bold"), width=18, relief="flat", cursor="hand2",
+            command=self.run_detection_async
         )
         self.run_button.grid(row=1, column=3, padx=(30, 5), pady=5)
 
         # ---- Image display row ----
-        images_frame = tk.Frame(self.root, pady=10)
+        images_frame = tk.Frame(self.root, pady=10, bg="#f5f0eb")
         images_frame.pack(fill="x", padx=20)
 
         self.image_panels = {}
         titles = ["CT (original)", "MRI (original)", "Fused Image", "Grad-CAM Heatmap"]
         for i, title in enumerate(titles):
-            col = tk.Frame(images_frame, bd=1, relief="solid")
+            col = tk.Frame(images_frame, bd=1, relief="solid", bg="#ede8e0")
             col.grid(row=0, column=i, padx=8)
-            tk.Label(col, text=title, font=("Segoe UI", 9, "bold")).pack(pady=(4, 2))
-            panel = tk.Label(col, bg="#f0f0f0", width=DISPLAY_SIZE[0], height=DISPLAY_SIZE[1])
+            tk.Label(col, text=title, font=("Segoe UI", 9, "bold"),
+                     bg="#ede8e0", fg="#3d2f1f").pack(pady=(4, 2))
+            panel = tk.Label(col, bg="#ddd6cc", width=DISPLAY_SIZE[0], height=DISPLAY_SIZE[1])
             panel.pack(padx=4, pady=4)
             self.image_panels[title] = panel
 
         # ---- Result row ----
-        result_frame = tk.Frame(self.root, pady=15)
+        result_frame = tk.Frame(self.root, pady=15, bg="#f5f0eb")
         result_frame.pack(fill="x", padx=20)
 
         self.prediction_label = tk.Label(
-            result_frame, text="Prediction: -", font=("Segoe UI", 14, "bold")
+            result_frame, text="Prediction: -", font=("Segoe UI", 14, "bold"),
+            bg="#f5f0eb", fg="#3d2f1f"
         )
         self.prediction_label.pack()
 
         self.confidence_label = tk.Label(
-            result_frame, text="Confidence: -", font=("Segoe UI", 11)
+            result_frame, text="Confidence: -", font=("Segoe UI", 11),
+            bg="#f5f0eb", fg="#5a4a38"
         )
         self.confidence_label.pack()
 
@@ -132,11 +141,11 @@ class BrainTumorApp:
     def _load_model(self):
         if os.path.exists(MODEL_PATH):
             self.model = tf.keras.models.load_model(MODEL_PATH)
-            self.status_label.config(text=f"Model loaded: {MODEL_PATH}", fg="green")
+            self.status_label.config(text=f"Model loaded: {MODEL_PATH}", fg="#2e7d32")
         else:
             self.status_label.config(
                 text=f"No trained model found at '{MODEL_PATH}'. Run train.py first.",
-                fg="red"
+                fg="#c0392b"
             )
 
     # ------------------------------------------------------------------ #
@@ -148,7 +157,7 @@ class BrainTumorApp:
         )
         if path:
             self.ct_path = path
-            self.ct_path_label.config(text=os.path.basename(path), fg="black")
+            self.ct_path_label.config(text=os.path.basename(path), fg="#3d2f1f")
             self._show_thumbnail(path, "CT (original)")
 
     def select_mri(self):
@@ -157,7 +166,7 @@ class BrainTumorApp:
         )
         if path:
             self.mri_path = path
-            self.mri_path_label.config(text=os.path.basename(path), fg="black")
+            self.mri_path_label.config(text=os.path.basename(path), fg="#3d2f1f")
             self._show_thumbnail(path, "MRI (original)")
 
     def _show_thumbnail(self, path, panel_key):
@@ -219,9 +228,9 @@ class BrainTumorApp:
         self._show_array(overlay, "Grad-CAM Heatmap")
 
         label = CLASS_NAMES[pred_class]
-        color = "#dc2626" if pred_class == 1 else "#16a34a"
+        color = "#c0392b" if pred_class == 1 else "#2e7d32"
         self.prediction_label.config(text=f"Prediction: {label}", fg=color)
-        self.confidence_label.config(text=f"Confidence: {confidence*100:.2f}%")
+        self.confidence_label.config(text=f"Confidence: {confidence*100:.2f}%", fg="#5a4a38")
 
         self.progress.stop()
         self.progress.pack_forget()

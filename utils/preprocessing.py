@@ -44,10 +44,11 @@ def normalize_image(img):
     return img / 255.0
 
 
-def preprocess_image(path, color_mode="grayscale", denoise_method="gaussian", size=IMG_SIZE):
+def preprocess_image(path, color_mode="grayscale", denoise_method="bilateral", size=IMG_SIZE):
     """
     Full preprocessing pipeline for a single image:
     load -> resize -> denoise -> normalize
+    Uses bilateral filter by default: preserves tumor edges while removing noise.
     """
     img = load_image(path, color_mode=color_mode)
     img = resize_image(img, size)
@@ -65,3 +66,30 @@ def clahe_enhance(img):
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(img_uint8)
     return normalize_image(enhanced)
+
+
+def skull_strip(img):
+    """
+    Step 2b: Skull Stripping — removes skull/background, keeping only brain tissue.
+    Uses Otsu thresholding + largest connected component + morphological fill.
+    img: float32 [0,1] grayscale. Returns skull-stripped float32 [0,1].
+    """
+    img_uint8 = (img * 255).astype(np.uint8) if img.max() <= 1.0 else img.astype(np.uint8)
+
+    # Otsu threshold to separate brain from background
+    _, thresh = cv2.threshold(img_uint8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # Keep only the largest connected component (brain)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(thresh, connectivity=8)
+    if num_labels <= 1:
+        brain_mask = thresh
+    else:
+        largest_label = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        brain_mask = np.uint8(labels == largest_label) * 255
+
+    # Fill holes with morphological closing
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    brain_mask = cv2.morphologyEx(brain_mask, cv2.MORPH_CLOSE, kernel)
+
+    stripped = cv2.bitwise_and(img_uint8, img_uint8, mask=brain_mask)
+    return normalize_image(stripped)
