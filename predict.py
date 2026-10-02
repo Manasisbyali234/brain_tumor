@@ -28,7 +28,7 @@ def get_args():
     parser = argparse.ArgumentParser(description="Predict brain tumor from CT + MRI images")
     parser.add_argument("--ct", type=str, required=True, help="Path to CT image")
     parser.add_argument("--mri", type=str, required=True, help="Path to MRI image")
-    parser.add_argument("--model", type=str, default="outputs/best_model.h5")
+    parser.add_argument("--model", type=str, default="outputs/best_model.keras")
     parser.add_argument("--fusion_method", type=str, default="dwt", choices=["average", "pca", "dwt"])
     parser.add_argument("--out_dir", type=str, default="outputs")
     return parser.parse_args()
@@ -78,8 +78,8 @@ def run_pipeline(ct_path, mri_path, model, fusion_method="dwt"):
     # Step 5-8: Predict with TTA
     input_tensor = np.expand_dims(fused, axis=(0, -1)).astype(np.float32)  # (1,H,W,1)
     prob = _tta_predict(model, input_tensor)
-    # Threshold 0.35: biased toward recall (catching tumors > missing them)
-    pred_class = int(prob >= 0.35)
+    # Threshold 0.5: standard decision boundary
+    pred_class = int(prob >= 0.5)
     confidence = prob if pred_class == 1 else 1 - prob
 
     # Step 9: Grad-CAM

@@ -15,53 +15,59 @@ import matplotlib.pyplot as plt
 
 def make_gradcam_heatmap(img_array, model, last_conv_layer_name="last_conv", pred_index=None):
     """
-    Grad-CAM that works with Keras 3 loaded models.
-    Avoids layer.output / model.output entirely — uses a manual forward pass
-    with GradientTape watching a tf.Variable holding the conv activations.
+    Grad-CAM compatible with Keras 2 and Keras 3.
+    Uses two sub-models: one up to the target conv layer, one for the rest.
     img_array: shape (1, H, W, C) — already preprocessed/normalized.
     """
     h, w = int(img_array.shape[1]), int(img_array.shape[2])
     img_tensor = tf.cast(img_array, tf.float32)
 
-    # Find target conv layer index; fall back to last Conv2D
-    target_idx = None
-    for i, layer in enumerate(model.layers):
+    # Find target conv layer; fall back to last Conv2D
+    target_layer = None
+    for layer in model.layers:
         if layer.name == last_conv_layer_name:
-            target_idx = i
+            target_layer = layer
             break
-    if target_idx is None:
-        for i, layer in enumerate(model.layers):
+    if target_layer is None:
+        for layer in model.layers:
             if isinstance(layer, tf.keras.layers.Conv2D):
-                target_idx = i
-    if target_idx is None:
+                target_layer = layer
+    if target_layer is None:
         return np.ones((h // 16, w // 16), dtype=np.float32)
 
-    # First pass: run up to (and including) target conv layer to get its output
-    x = img_tensor
-    for i, layer in enumerate(model.layers):
-        x = layer(x, training=False)
-        if i == target_idx:
-            conv_out_value = x.numpy()  # capture as numpy
-            break
-
-    # Second pass inside GradientTape: use a tf.Variable for the conv output
-    # so gradients can flow back through the remaining layers
-    conv_var = tf.Variable(conv_out_value, trainable=True, dtype=tf.float32)
-
-    with tf.GradientTape() as tape:
-        tape.watch(conv_var)
-        x2 = conv_var
-        for i, layer in enumerate(model.layers):
-            if i > target_idx:
+    try:
+        # Build sub-models using functional API outputs
+        grad_model = tf.keras.Model(
+            inputs=model.inputs,
+            outputs=[target_layer.output, model.output]
+        )
+        with tf.GradientTape() as tape:
+            conv_outputs, predictions = grad_model(img_tensor, training=False)
+            tape.watch(conv_outputs)
+            class_channel = predictions[:, 0] if pred_index is None else predictions[:, pred_index]
+        grads = tape.gradient(class_channel, conv_outputs)
+    except Exception:
+        # Fallback: use a tf.Variable to carry gradients through remaining layers
+        target_idx = next(i for i, l in enumerate(model.layers) if l is target_layer)
+        x = img_tensor
+        for layer in model.layers[1:target_idx + 1]:   # skip InputLayer
+            x = layer(x, training=False)
+        conv_out_value = x.numpy()
+        conv_var = tf.Variable(conv_out_value, trainable=True, dtype=tf.float32)
+        with tf.GradientTape() as tape:
+            tape.watch(conv_var)
+            x2 = conv_var
+            for layer in model.layers[target_idx + 1:]:
                 x2 = layer(x2, training=False)
-        class_channel = x2[:, 0] if pred_index is None else x2[:, pred_index]
+            class_channel = x2[:, 0] if pred_index is None else x2[:, pred_index]
+        grads = tape.gradient(class_channel, conv_var)
+        conv_outputs = conv_var
 
-    grads = tape.gradient(class_channel, conv_var)
     if grads is None:
         return np.ones((h // 16, w // 16), dtype=np.float32)
 
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))                    # (filters,)
-    heatmap = tf.reduce_sum(conv_var[0] * pooled_grads, axis=-1)            # (H, W)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    heatmap = tf.reduce_sum(conv_outputs[0] * pooled_grads, axis=-1)
     heatmap = tf.maximum(heatmap, 0)
     max_val = tf.math.reduce_max(heatmap)
     if max_val > 0:

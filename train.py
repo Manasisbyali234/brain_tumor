@@ -86,7 +86,7 @@ def main():
 
     callbacks = [
         tf.keras.callbacks.ModelCheckpoint(
-            os.path.join(args.out_dir, "best_model.h5"),
+            os.path.join(args.out_dir, "best_model.keras"),
             monitor="val_auc", save_best_only=True, mode="max", verbose=1
         ),
         tf.keras.callbacks.EarlyStopping(
@@ -108,7 +108,7 @@ def main():
     )
 
     print("[4/4] Saving final model + training history ...")
-    model.save(os.path.join(args.out_dir, "final_model.h5"))
+    model.save(os.path.join(args.out_dir, "final_model.keras"))
     np.save(os.path.join(args.out_dir, "history.npy"), history.history)
     print("Done. Artifacts saved to:", args.out_dir)
 

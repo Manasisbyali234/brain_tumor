@@ -23,7 +23,7 @@ from utils.explainability import (
     draw_attention_contour, segment_tumor_mask, predict_regression_score
 )
 
-MODEL_PATH = "outputs/best_model.h5"
+MODEL_PATH = "outputs/best_model.keras"
 CLASS_NAMES = ["Healthy Brain", "Tumor"]
 
 STEPS = [
@@ -349,9 +349,9 @@ def render_model_performance():
 
         col_c, col_d = st.columns(2)
         with col_c:
-            st.image(cm_path, caption="Confusion Matrix — Test Set", use_container_width=True)
+            st.image(cm_path, caption="Confusion Matrix — Test Set", use_column_width=True)
         with col_d:
-            st.image(roc_path, caption="ROC Curve — AUC = 0.974", use_container_width=True)
+            st.image(roc_path, caption="ROC Curve — AUC = 0.974", use_column_width=True)
 
 
 # ── State management ──────────────────────────────────────────────────────────
@@ -359,7 +359,38 @@ def render_model_performance():
 @st.cache_resource
 def load_model():
     if not os.path.exists(MODEL_PATH): return None
-    return tf.keras.models.load_model(MODEL_PATH)
+    try:
+        return tf.keras.models.load_model(MODEL_PATH)
+    except Exception:
+        # Keras version mismatch — rebuild exact architecture and load weights only
+        from models.cnn_model import build_custom_cnn, compile_model
+        m = build_custom_cnn(input_shape=(224, 224, 1), num_classes=2)
+        compile_model(m)
+        m.load_weights(MODEL_PATH)
+        return m
+
+
+def is_valid_brain_scan(uploaded_file) -> bool:
+    """Return True if the image looks like a grayscale brain scan (CT/MRI)."""
+    uploaded_file.seek(0)
+    img = Image.open(uploaded_file).convert("RGB")
+    arr = np.array(img, dtype=np.float32)
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    # Check near-grayscale: R≈G≈B (medical scans have very low color saturation)
+    rg_diff = np.mean(np.abs(r - g))
+    rb_diff = np.mean(np.abs(r - b))
+    gb_diff = np.mean(np.abs(g - b))
+    avg_color_diff = (rg_diff + rb_diff + gb_diff) / 3.0
+    if avg_color_diff > 25.0:          # too colorful → not a scan
+        return False
+    # Accept both dark-background (MRI) and light-background (CT) scans
+    gray = (r + g + b) / 3.0
+    dark_pixel_ratio  = np.mean(gray < 50)
+    light_pixel_ratio = np.mean(gray > 200)
+    # Valid scan: either has dark bg (MRI style) OR light bg (CT style)
+    if dark_pixel_ratio < 0.02 and light_pixel_ratio < 0.02:
+        return False
+    return True
 
 
 def save_upload_to_temp(f):
@@ -464,7 +495,7 @@ def execute_step(step, model):
             tensor = src[np.newaxis, :, :, np.newaxis].astype(np.float32)
             s.input_tensor = tensor
             raw_prob = float(model.predict(tensor, verbose=0)[0][0])
-            s.pred_class = int(raw_prob >= 0.4)
+            s.pred_class = int(raw_prob >= 0.5)
             distance   = abs(raw_prob - 0.5)
             stretched  = (distance / 0.5) ** 0.3
             confidence = 0.75 + stretched * 0.24
@@ -626,49 +657,58 @@ def render_sidebar(ct_ready):
 
 # ── Step renderers ────────────────────────────────────────────────────────────
 
-def render_preprocessing(s):
+def render_preprocessing(s, inside_expander=False):
     _section_header("🔬", "Step 1 — Preprocessing", "CLAHE enhancement · Gaussian denoising · Normalization")
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
     c1, c2 = st.columns(2, gap="large")
-    c1.image(s.ct_img,  caption="CT — preprocessed",  clamp=True, use_container_width=True)
-    c2.image(s.mri_img, caption="MRI — preprocessed", clamp=True, use_container_width=True)
+    c1.image(s.ct_img,  caption="CT — preprocessed",  clamp=True, use_column_width=True)
+    c2.image(s.mri_img, caption="MRI — preprocessed", clamp=True, use_column_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
-    with st.expander("📋 Preprocessing Details", expanded=False):
+    if inside_expander:
         _meta_table(s.step_meta.get("Preprocessing", {}))
+    else:
+        with st.expander("📋 Preprocessing Details", expanded=False):
+            _meta_table(s.step_meta.get("Preprocessing", {}))
     st.success("✓ Normalized to [0,1]  ·  ✓ Resized to 224×224  ·  ✓ CLAHE enhanced  ·  ✓ Gaussian denoised")
 
 
-def render_registration(s):
+def render_registration(s, inside_expander=False):
     _section_header("📐", "Step 2 — Image Registration", "ORB feature matching · RANSAC homography alignment")
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3, gap="medium")
-    c1.image(s.ct_img,          caption="CT (fixed reference)",  clamp=True, use_container_width=True)
-    c2.image(s.mri_img,         caption="MRI (original)",        clamp=True, use_container_width=True)
-    c3.image(s.mri_registered,  caption="MRI registered to CT",  clamp=True, use_container_width=True)
+    c1.image(s.ct_img,          caption="CT (fixed reference)",  clamp=True, use_column_width=True)
+    c2.image(s.mri_img,         caption="MRI (original)",        clamp=True, use_column_width=True)
+    c3.image(s.mri_registered,  caption="MRI registered to CT",  clamp=True, use_column_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
-    with st.expander("📋 Registration Details", expanded=False):
+    if inside_expander:
         _meta_table(s.step_meta.get("Registration", {}))
+    else:
+        with st.expander("📋 Registration Details", expanded=False):
+            _meta_table(s.step_meta.get("Registration", {}))
     st.success("✓ CT and MRI successfully aligned using ORB + RANSAC homography")
 
 
-def render_fusion(s):
+def render_fusion(s, inside_expander=False):
     method = s.fusion_method.upper()
     _section_header("🔀", f"Step 3 — Image Fusion ({method})", "CT + MRI combined into single enriched image")
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3, gap="medium")
-    c1.image(s.ct_img,          caption="CT input",              clamp=True, use_container_width=True)
-    c2.image(s.mri_registered,  caption="Registered MRI input",  clamp=True, use_container_width=True)
-    c3.image(s.fused,           caption=f"Fused ({method})",     clamp=True, use_container_width=True)
+    c1.image(s.ct_img,          caption="CT input",              clamp=True, use_column_width=True)
+    c2.image(s.mri_registered,  caption="Registered MRI input",  clamp=True, use_column_width=True)
+    c3.image(s.fused,           caption=f"Fused ({method})",     clamp=True, use_column_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
-    with st.expander("📋 Fusion Details", expanded=False):
+    if inside_expander:
         _meta_table(s.step_meta.get("Fusion", {}))
+    else:
+        with st.expander("📋 Fusion Details", expanded=False):
+            _meta_table(s.step_meta.get("Fusion", {}))
     st.success(f"✓ CT-MRI fusion completed using {method} — fused image ready for CNN")
 
 
-def render_prediction(s):
+def render_prediction(s, inside_expander=False):
     _section_header("🧠", "Step 4 — CNN Prediction", "Deep learning classification on fused image")
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:16px;'>", unsafe_allow_html=True)
@@ -725,13 +765,16 @@ def render_prediction(s):
         _prob_bar("Tumor",  tumor_pct,  "#f87171", "🔴")
         _prob_bar("Normal", normal_pct, "#4ade80", "🟢")
 
-        with st.expander("📋 Model Output Details", expanded=False):
+        if not inside_expander:
+            with st.expander("📋 Model Output Details", expanded=False):
+                _meta_table(s.step_meta.get("CNN Prediction", {}))
+        else:
             _meta_table(s.step_meta.get("CNN Prediction", {}))
 
     with col_img:
         display_img = s.fused if s.fused is not None else s.mri_img
         st.image(display_img, caption="Image used for CNN prediction",
-                 clamp=True, use_container_width=True)
+                 clamp=True, use_column_width=True)
         st.markdown(f"""
         <div style="margin-top:12px;background:#ede8e0;border:1px solid #c9bfb0;
                     border-radius:12px;padding:14px 18px;">
@@ -748,7 +791,7 @@ def render_prediction(s):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_gradcam(s):
+def render_gradcam(s, inside_expander=False):
     _section_header("🔥", "Step 5 — Grad-CAM Explanation", "Visual explanation of CNN attention regions")
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
@@ -761,10 +804,10 @@ def render_gradcam(s):
 
     src = s.fused if s.fused is not None else s.mri_img
     c1, c2, c3, c4 = st.columns(4, gap="small")
-    c1.image(s.ct_img,       caption="Original CT",             clamp=True, use_container_width=True)
-    c2.image(src,            caption="CNN Input",               clamp=True, use_container_width=True)
-    c3.image(s.overlay,      caption="Red Grad-CAM Overlay",    use_container_width=True)
-    c4.image(s.contour_img,  caption="Tumor Marking (Red)",     use_container_width=True)
+    c1.image(s.ct_img,       caption="Original CT",             clamp=True, use_column_width=True)
+    c2.image(src,            caption="CNN Input",               clamp=True, use_column_width=True)
+    c3.image(s.overlay,      caption="Red Grad-CAM Overlay",    use_column_width=True)
+    c4.image(s.contour_img,  caption="Tumor Marking (Red)",     use_column_width=True)
 
     st.markdown(f"""
     <div style="display:flex;gap:10px;align-items:center;margin:12px 0;flex-wrap:wrap;">
@@ -796,12 +839,15 @@ def render_gradcam(s):
                 "This is a Grad-CAM attention map — NOT an exact tumor boundary. "
                 "Use alongside clinical judgment.")
 
-    with st.expander("📋 Grad-CAM Details", expanded=False):
+    if inside_expander:
         _meta_table(s.step_meta.get("Grad-CAM Explanation", {}))
+    else:
+        with st.expander("📋 Grad-CAM Details", expanded=False):
+            _meta_table(s.step_meta.get("Grad-CAM Explanation", {}))
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_regression(s):
+def render_regression(s, inside_expander=False):
     _section_header("📈", "Step 6 — Regression Analysis", "Continuous severity score from CNN output")
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:16px;'>", unsafe_allow_html=True)
@@ -862,21 +908,24 @@ def render_regression(s):
         fig.tight_layout()
         st.pyplot(fig); plt.close(fig)
 
-    with st.expander("📋 Regression Details", expanded=False):
+    if inside_expander:
         _meta_table(s.step_meta.get("Regression Analysis", {}))
+    else:
+        with st.expander("📋 Regression Details", expanded=False):
+            _meta_table(s.step_meta.get("Regression Analysis", {}))
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_segmentation(s):
+def render_segmentation(s, inside_expander=False):
     _section_header("🗺️", "Step 7 — Tumor Segmentation", "Pixel-level mask from brain-constrained Grad-CAM")
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
 
     src = s.fused if s.fused is not None else s.mri_img
     c1, c2, c3 = st.columns(3, gap="medium")
-    c1.image(src,           caption="CNN Input Image",      clamp=True, use_container_width=True)
-    c2.image(s.seg_mask,    caption="Binary Tumor Mask",    clamp=True, use_container_width=True)
-    c3.image(s.seg_overlay, caption="Tumor Mask (Red)",       use_container_width=True)
+    c1.image(src,           caption="CNN Input Image",      clamp=True, use_column_width=True)
+    c2.image(s.seg_mask,    caption="Binary Tumor Mask",    clamp=True, use_column_width=True)
+    c3.image(s.seg_overlay, caption="Tumor Mask (Red)",       use_column_width=True)
 
     st.markdown("""
     <div style="display:flex;gap:16px;align-items:center;margin:12px 0;flex-wrap:wrap;">
@@ -892,8 +941,11 @@ def render_segmentation(s):
     </div>
     """, unsafe_allow_html=True)
 
-    with st.expander("📋 Segmentation Details", expanded=False):
+    if inside_expander:
         _meta_table(s.step_meta.get("Tumor Segmentation", {}))
+    else:
+        with st.expander("📋 Segmentation Details", expanded=False):
+            _meta_table(s.step_meta.get("Tumor Segmentation", {}))
     st.info("Brain region isolated via Otsu + largest connected component. "
             "Grad-CAM heatmap zeroed outside brain, then adaptive threshold applied.")
     st.markdown("</div>", unsafe_allow_html=True)
@@ -930,7 +982,7 @@ def render_results(s):
         st.markdown("<div style='font-size:.82rem;color:#7a6a58;font-weight:700;letter-spacing:.08em;margin-bottom:10px;'>PREVIOUS STEPS</div>", unsafe_allow_html=True)
         for st_ in prev_steps:
             with st.expander(f"✅ Step {STEP_NUMS[st_]}: {STEP_ICONS[st_]} {st_}", expanded=False):
-                RENDERERS[st_](s)
+                RENDERERS[st_](s, inside_expander=True)
 
     for st_ in STEPS:
         if st_ != active and s.step_status.get(st_) == "failed":
@@ -997,6 +1049,20 @@ def main():
     ct_ready = ct_file is not None and mri_file is not None
 
     if ct_ready:
+        ct_valid  = is_valid_brain_scan(ct_file)
+        mri_valid = is_valid_brain_scan(mri_file)
+        if not ct_valid or not mri_valid:
+            which = []
+            if not ct_valid:  which.append("CT")
+            if not mri_valid: which.append("MRI")
+            st.error(
+                f"⚠️ Invalid image detected for: **{', '.join(which)}**. "
+                "Please upload a valid brain scan (CT or MRI). "
+                "The image must be a grayscale medical scan with a dark background."
+            )
+            ct_ready = False
+
+    if ct_ready:
         if s.ct_name != ct_file.name:
             s.ct_path  = save_upload_to_temp(ct_file)
             s.mri_path = save_upload_to_temp(mri_file)
@@ -1005,9 +1071,9 @@ def main():
         ct_file.seek(0); mri_file.seek(0)
         p1, p2 = st.columns(2, gap="large")
         with p1:
-            st.image(Image.open(ct_file),  caption="CT — original upload",  use_container_width=True)
+            st.image(Image.open(ct_file),  caption="CT — original upload",  use_column_width=True)
         with p2:
-            st.image(Image.open(mri_file), caption="MRI — original upload", use_container_width=True)
+            st.image(Image.open(mri_file), caption="MRI — original upload", use_column_width=True)
         st.markdown("<div style='font-size:.8rem;color:#7a6a58;margin-top:4px;'>👈 Use the sidebar to run each pipeline step in order.</div>", unsafe_allow_html=True)
     else:
         st.markdown("""
