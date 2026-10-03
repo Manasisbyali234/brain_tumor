@@ -349,9 +349,9 @@ def render_model_performance():
 
         col_c, col_d = st.columns(2)
         with col_c:
-            st.image(cm_path, caption="Confusion Matrix — Test Set", use_column_width=True)
+            st.image(cm_path, caption="Confusion Matrix — Test Set", use_container_width=True)
         with col_d:
-            st.image(roc_path, caption="ROC Curve — AUC = 0.974", use_column_width=True)
+            st.image(roc_path, caption="ROC Curve — AUC = 0.974", use_container_width=True)
 
 
 # ── State management ──────────────────────────────────────────────────────────
@@ -662,8 +662,8 @@ def render_preprocessing(s, inside_expander=False):
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
     c1, c2 = st.columns(2, gap="large")
-    c1.image(s.ct_img,  caption="CT — preprocessed",  clamp=True, use_column_width=True)
-    c2.image(s.mri_img, caption="MRI — preprocessed", clamp=True, use_column_width=True)
+    c1.image(s.ct_img,  caption="CT — preprocessed",  clamp=True, use_container_width=True)
+    c2.image(s.mri_img, caption="MRI — preprocessed", clamp=True, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
     if inside_expander:
         _meta_table(s.step_meta.get("Preprocessing", {}))
@@ -678,9 +678,9 @@ def render_registration(s, inside_expander=False):
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3, gap="medium")
-    c1.image(s.ct_img,          caption="CT (fixed reference)",  clamp=True, use_column_width=True)
-    c2.image(s.mri_img,         caption="MRI (original)",        clamp=True, use_column_width=True)
-    c3.image(s.mri_registered,  caption="MRI registered to CT",  clamp=True, use_column_width=True)
+    c1.image(s.ct_img,          caption="CT (fixed reference)",  clamp=True, use_container_width=True)
+    c2.image(s.mri_img,         caption="MRI (original)",        clamp=True, use_container_width=True)
+    c3.image(s.mri_registered,  caption="MRI registered to CT",  clamp=True, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
     if inside_expander:
         _meta_table(s.step_meta.get("Registration", {}))
@@ -696,9 +696,9 @@ def render_fusion(s, inside_expander=False):
     _badge("✓ Completed", "#4ade80")
     st.markdown("<div style='margin-top:12px;'>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3, gap="medium")
-    c1.image(s.ct_img,          caption="CT input",              clamp=True, use_column_width=True)
-    c2.image(s.mri_registered,  caption="Registered MRI input",  clamp=True, use_column_width=True)
-    c3.image(s.fused,           caption=f"Fused ({method})",     clamp=True, use_column_width=True)
+    c1.image(s.ct_img,          caption="CT input",              clamp=True, use_container_width=True)
+    c2.image(s.mri_registered,  caption="Registered MRI input",  clamp=True, use_container_width=True)
+    c3.image(s.fused,           caption=f"Fused ({method})",     clamp=True, use_container_width=True)
     st.markdown("</div>", unsafe_allow_html=True)
     if inside_expander:
         _meta_table(s.step_meta.get("Fusion", {}))
@@ -774,7 +774,7 @@ def render_prediction(s, inside_expander=False):
     with col_img:
         display_img = s.fused if s.fused is not None else s.mri_img
         st.image(display_img, caption="Image used for CNN prediction",
-                 clamp=True, use_column_width=True)
+                 clamp=True, use_container_width=True)
         st.markdown(f"""
         <div style="margin-top:12px;background:#ede8e0;border:1px solid #c9bfb0;
                     border-radius:12px;padding:14px 18px;">
@@ -804,10 +804,10 @@ def render_gradcam(s, inside_expander=False):
 
     src = s.fused if s.fused is not None else s.mri_img
     c1, c2, c3, c4 = st.columns(4, gap="small")
-    c1.image(s.ct_img,       caption="Original CT",             clamp=True, use_column_width=True)
-    c2.image(src,            caption="CNN Input",               clamp=True, use_column_width=True)
-    c3.image(s.overlay,      caption="Red Grad-CAM Overlay",    use_column_width=True)
-    c4.image(s.contour_img,  caption="Tumor Marking (Red)",     use_column_width=True)
+    c1.image(s.ct_img,       caption="Original CT",             clamp=True, use_container_width=True)
+    c2.image(src,            caption="CNN Input",               clamp=True, use_container_width=True)
+    c3.image(s.overlay,      caption="Red Grad-CAM Overlay",    use_container_width=True)
+    c4.image(s.contour_img,  caption="Tumor Marking (Red)",     use_container_width=True)
 
     st.markdown(f"""
     <div style="display:flex;gap:10px;align-items:center;margin:12px 0;flex-wrap:wrap;">
@@ -923,9 +923,9 @@ def render_segmentation(s, inside_expander=False):
 
     src = s.fused if s.fused is not None else s.mri_img
     c1, c2, c3 = st.columns(3, gap="medium")
-    c1.image(src,           caption="CNN Input Image",      clamp=True, use_column_width=True)
-    c2.image(s.seg_mask,    caption="Binary Tumor Mask",    clamp=True, use_column_width=True)
-    c3.image(s.seg_overlay, caption="Tumor Mask (Red)",       use_column_width=True)
+    c1.image(src,           caption="CNN Input Image",      clamp=True, use_container_width=True)
+    c2.image(s.seg_mask,    caption="Binary Tumor Mask",    clamp=True, use_container_width=True)
+    c3.image(s.seg_overlay, caption="Tumor Mask (Red)",       use_container_width=True)
 
     st.markdown("""
     <div style="display:flex;gap:16px;align-items:center;margin:12px 0;flex-wrap:wrap;">
@@ -1071,9 +1071,9 @@ def main():
         ct_file.seek(0); mri_file.seek(0)
         p1, p2 = st.columns(2, gap="large")
         with p1:
-            st.image(Image.open(ct_file),  caption="CT — original upload",  use_column_width=True)
+            st.image(Image.open(ct_file),  caption="CT — original upload",  use_container_width=True)
         with p2:
-            st.image(Image.open(mri_file), caption="MRI — original upload", use_column_width=True)
+            st.image(Image.open(mri_file), caption="MRI — original upload", use_container_width=True)
         st.markdown("<div style='font-size:.8rem;color:#7a6a58;margin-top:4px;'>👈 Use the sidebar to run each pipeline step in order.</div>", unsafe_allow_html=True)
     else:
         st.markdown("""
